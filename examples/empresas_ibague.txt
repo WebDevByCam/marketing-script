@@ -1,0 +1,6 @@
+Hotel Central - https://hotelcentral.example.com
+Restaurante Plaza - https://restauranteplaza.example.com
+Café Aroma - https://cafearoma.example.com
+Spa Relax - https://sparelax.example.com
+Tienda Local
+https://sitiosinurl.example.com
