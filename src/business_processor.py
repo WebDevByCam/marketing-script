@@ -17,10 +17,11 @@ class BusinessDataProcessor:
     """Procesador principal para recolectar y procesar datos de negocios."""
     
     def __init__(self, api_key: str = None, workers: int = 1, 
-                 humanize: bool = False, humanize_speed: float = 0.02):
+                 humanize: bool = False, humanize_speed: float = 0.02,
+                 rate_limit_per_minute: int = 600):
         self.api_key = api_key
         self.workers = workers
-        self.places_client = PlacesAPIClient(api_key) if api_key else None
+        self.places_client = PlacesAPIClient(api_key, rate_limit_per_minute=rate_limit_per_minute) if api_key else None
         self.email_scraper = EmailScraper()
         self.output_writer = OutputWriter(humanize, humanize_speed)
     
@@ -100,7 +101,7 @@ class BusinessDataProcessor:
     def process_item(self, item: Dict, scan_emails: bool = True) -> Dict:
         """Procesa un item individual (lugar o entrada de archivo)."""
         # Obtener detalles si es de Places API
-        place_id = item.get("place_id")
+        place_id = item.get("place_id") or item.get("id")
         data = item
         
         if place_id and self.places_client:
@@ -112,12 +113,13 @@ class BusinessDataProcessor:
                 self.output_writer.print(f"[warn] Error obteniendo detalles para {place_id}: {e}")
         
         # Extraer información básica
-        name = safe_get(data, "name") or safe_get(item, "name", default="")
+        name = safe_get(data, "name") or safe_get(data, "displayName", {}).get("text") or safe_get(item, "name", default="")
         phone = (safe_get(data, "formatted_phone_number") or 
-                safe_get(data, "international_phone_number") or 
+                safe_get(data, "nationalPhoneNumber") or 
+                safe_get(data, "internationalPhoneNumber") or 
                 safe_get(item, "formatted_phone_number", default=""))
-        website = safe_get(data, "website") or safe_get(item, "website") or safe_get(item, "url", default="")
-        address = safe_get(data, "formatted_address") or safe_get(item, "formatted_address", default="")
+        website = safe_get(data, "website") or safe_get(data, "websiteUri") or safe_get(item, "website") or safe_get(item, "url", default="")
+        address = safe_get(data, "formatted_address") or safe_get(data, "formattedAddress") or safe_get(item, "formatted_address", default="")
         existing_email = safe_get(item, "email", default="")
         
         # Buscar emails si se solicita y hay website
