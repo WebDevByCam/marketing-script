@@ -177,4 +177,3 @@ python main.py --city "Medellín" --type "hotel" --limit 10 --outfile hoteles_te
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
-
