@@ -9,6 +9,7 @@ import streamlit_authenticator as stauth
 import pandas as pd
 import os
 import sys
+import random
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -156,6 +157,96 @@ def check_environment():
         'issues': issues
     }
 
+def get_city_neighborhoods(city):
+    """Obtener lista de barrios para una ciudad específica."""
+    city_lower = city.lower().strip()
+
+    # Diccionario de barrios por ciudad en Colombia
+    neighborhoods = {
+        # Bogotá
+        "bogotá": ["Chico", "Chapinero", "Cedritos", "Usaquén", "Salitre", "Centro", "Teusaquillo",
+                  "Zona Rosa", "Parque de la 93", "La Candelaria", "Santa Fe", "San Cristóbal",
+                  "Kennedy", "Bosa", "Suba", "Engativá", "Fontibón", "Barrios Unidos", "Puente Aranda"],
+
+        # Medellín
+        "medellín": ["El Poblado", "Laureles", "Centro", "Envigado", "Sabaneta", "Itagüí",
+                    "Belén", "Robledo", "Aranjuez", "Manrique", "Castilla", "Doce de Octubre",
+                    "Villa Hermosa", "Buenos Aires", "La América", "San Javier", "La Candelaria"],
+
+        # Cali
+        "cali": ["San Fernando", "Centro", "Santa Monica", "Tequendama", "Granada", "Versalles",
+                "San Antonio", "La Flora", "Pance", "Ciudad Jardín", "El Peñón", "Alfonso López",
+                "La Base", "El Ingenio", "El Piloto", "La Rivera", "El Refugio"],
+
+        # Barranquilla
+        "barranquilla": ["Centro", "Alto Prado", "El Prado", "Riomar", "La Castellana", "Paseo Bolívar",
+                        "Villa Country", "El Country", "Ciudad Jardín", "La Cumbre", "Los Nogales",
+                        "San Vicente", "La Sierra", "El Recreo", "Villa Santos", "Los Alpes"],
+
+        # Cartagena
+        "cartagena": ["Centro Histórico", "Bocagrande", "Laguito", "Castillogrande", "El Laguito",
+                     "Pie de la Popa", "Getsemaní", "San Diego", "La Matuna", "Marbella",
+                     "El Cabrero", "Crespo", "Olaya Herrera", "Torices", "Ararca"],
+
+        # Bucaramanga
+        "bucaramanga": ["Centro", "Cabecera", "La Concordia", "El Prado", "Floridablanca",
+                       "Girón", "Piedecuesta", "Zona Rosa", "La Cumbre", "Altos de San Ignacio",
+                       "Ciudadela Real de Minas", "El Bosque", "La Joya", "San Alonso"],
+
+        # Pereira
+        "pereira": ["Centro", "Circular", "Cuba", "El Oso", "Dosquebradas", "La Florida",
+                   "Villarestrepo", "San Nicolás", "Alfonso López", "El Rocío", "Villa Santana"],
+
+        # Santa Marta
+        "santa marta": ["Centro Histórico", "El Rodadero", "Bello Horizonte", "Pozos Colorados",
+                       "Mamatoco", "Gaira", "Minca", "Taganga", "Palomino", "Buritaca"],
+
+        # Ibagué
+        "ibagué": ["Centro", "San Isidro", "La Pola", "El Salado", "Villa Restrepo", "La Macedonia",
+                  "El Jardín", "Alfonso López", "La Esperanza", "San Antonio", "El Totumo"],
+
+        # Pasto
+        "pasto": ["Centro", "San Vicente", "Catambuco", "Alfonso López", "La Laguna",
+                 "El Tejar", "San Andrés", "La Florida", "El Batán", "El Calvario"],
+
+        # Manizales
+        "manizales": ["Centro", "Palogrande", "La Sultana", "Chipre", "La Linda",
+                     "El Cable", "La Enea", "La Castellana", "Alfonso López", "La Aurora"],
+
+        # Villavicencio
+        "villavicencio": ["Centro", "La Esperanza", "Porfía", "Alfonso López", "La Paz",
+                         "El Recreo", "Villa del Prado", "La Libertad", "El Dorado"],
+
+        # Montería
+        "montería": ["Centro", "La Castellana", "El Recreo", "Villa Nueva", "La Gloria",
+                    "El Dorado", "San José", "La Esperanza", "Alfonso López"],
+
+        # Valledupar
+        "valledupar": ["Centro", "Villa María", "La Nevada", "Villa Germania", "Alfonso López",
+                      "La Esperanza", "Villa del Rosario", "El Jardín", "La Paz"],
+
+        # Popayán
+        "popayán": ["Centro", "San José", "Alfonso López", "La Esperanza", "El Calvario",
+                   "La Laguna", "El Bolo", "La Florida", "San Francisco"],
+
+        # Neiva
+        "neiva": ["Centro", "Villa del Prado", "La Esperanza", "Alfonso López", "El Recreo",
+                 "La Toma", "El Porvenir", "San Antonio", "La Libertad"],
+
+        # Armenia
+        "armenia": ["Centro", "La Castellana", "El Recreo", "Alfonso López", "La Esperanza",
+                   "Villa Flora", "La Paz", "El Jardín", "San Antonio"]
+    }
+
+    # Buscar coincidencias parciales
+    for city_key, hoods in neighborhoods.items():
+        if city_key in city_lower or city_lower in city_key:
+            return hoods
+
+    # Si no encuentra la ciudad específica, devolver barrios genéricos comunes
+    return ["Centro", "Norte", "Sur", "Este", "Oeste", "Zona Rosa", "Plaza Principal",
+            "Parque Central", "Alfonso López", "La Esperanza", "El Recreo", "Villa Nueva"]
+
 def run_search(city, business_type, target_count, scan_emails, progress_callback=None):
     """Ejecutar búsqueda de empresas en un hilo separado."""
     try:
@@ -169,10 +260,19 @@ def run_search(city, business_type, target_count, scan_emails, progress_callback
         if progress_callback:
             progress_callback("🔍 Buscando empresas con información de contacto...")
 
+        # Generar variación de búsqueda por barrios para evitar resultados duplicados
+        neighborhoods = get_city_neighborhoods(city)
+        # Agregar opción de búsqueda sin barrio específico (30% de probabilidad)
+        if random.random() < 0.3:
+            search_variation = ""  # Sin barrio específico
+        else:
+            search_variation = random.choice(neighborhoods)
+
         results = processor.load_businesses_with_contact_info(
             city=city,
             business_type=business_type,
-            target_count=target_count
+            target_count=target_count,
+            search_variation=search_variation
         )
 
         if not results:

@@ -188,7 +188,7 @@ class BusinessDataProcessor:
         
         return results
 
-    def load_businesses_with_contact_info(self, city: str, business_type: str, target_count: int) -> List[Dict]:
+    def load_businesses_with_contact_info(self, city: str, business_type: str, target_count: int, search_variation: str = "") -> List[Dict]:
         """
         Load businesses from Google Places API that have contact information.
         
@@ -196,12 +196,20 @@ class BusinessDataProcessor:
             city (str): City and country for the search
             business_type (str): Type of business to search for
             target_count (int): Target number of businesses to return
+            search_variation (str): Additional search terms to add variety
             
         Returns:
             list: List of businesses with basic contact information (filtered from API results)
         """
+        # Add search variation to avoid duplicate results
+        if search_variation:
+            # Add variation terms to the business type
+            varied_business_type = f"{business_type} {search_variation}"
+        else:
+            varied_business_type = business_type
+            
         # Load businesses from Places API - get enough to reach target
-        businesses = self.load_from_places_api(city, business_type, target_count * 3)  # Get more to ensure we reach target
+        businesses = self.load_from_places_api(city, varied_business_type, target_count * 3)  # Get more to ensure we reach target
         
         if not businesses:
             return []
