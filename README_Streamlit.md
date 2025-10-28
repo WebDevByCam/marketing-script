@@ -17,7 +17,7 @@ GOOGLE_API_KEY=tu_api_key_aqui
 
 ### 3. Ejecutar la aplicación
 ```bash
-streamlit run app.py
+cd c:/code/marketing-script && python -m streamlit run app.py --server.headless true --server.port 8501
 ```
 
 La aplicación estará disponible en: http://localhost:8501

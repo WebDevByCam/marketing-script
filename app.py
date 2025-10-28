@@ -184,7 +184,8 @@ def run_search(city, business_type, target_count, scan_emails, progress_callback
         processed_data = processor.process_batch(
             items=results,
             scan_emails=scan_emails,
-            delay=0
+            delay=0,
+            city=city
         )
 
         # Generar archivo de salida

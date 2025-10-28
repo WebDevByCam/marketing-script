@@ -98,7 +98,7 @@ class BusinessDataProcessor:
         self.output_writer.print(f"[i] Cargados {len(results)} elementos desde {filepath}")
         return results
     
-    def process_item(self, item: Dict, scan_emails: bool = True) -> Dict:
+    def process_item(self, item: Dict, scan_emails: bool = True, city: str = "") -> Dict:
         """Procesa un item individual (lugar o entrada de archivo)."""
         # Obtener detalles si es de Places API
         place_id = item.get("place_id") or item.get("id")
@@ -137,14 +137,14 @@ class BusinessDataProcessor:
             "Teléfono": clean_phone(phone).strip() if phone else "N/A",
             "Correo": ", ".join(email_list) if email_list else "N/A",
             "Página Web": website.strip() if website else "N/A",
-            "Ciudad": safe_get(item, "city", default=""),
+            "Ciudad": city or safe_get(item, "city", default=""),
             "Dirección (opcional)": address.strip(),
             "Google Maps URL (opcional)": safe_get(data, "url", default=""),
             "place_id (debug)": place_id or ""
         }
     
     def process_batch(self, items: List[Dict], scan_emails: bool = True, 
-                     delay: float = 1.0) -> List[Dict]:
+                     delay: float = 1.0, city: str = "") -> List[Dict]:
         """Procesa un lote de items."""
         results = []
         
@@ -154,7 +154,7 @@ class BusinessDataProcessor:
             
             with ThreadPoolExecutor(max_workers=self.workers) as executor:
                 futures = {
-                    executor.submit(self.process_item, item, scan_emails): item 
+                    executor.submit(self.process_item, item, scan_emails, city): item 
                     for item in items
                 }
                 
@@ -172,7 +172,7 @@ class BusinessDataProcessor:
             # Procesamiento secuencial
             for i, item in enumerate(items, 1):
                 try:
-                    result = self.process_item(item, scan_emails)
+                    result = self.process_item(item, scan_emails, city)
                     results.append(result)
                 except Exception as e:
                     self.output_writer.print(f"[warn] Error procesando item {i}: {e}")
@@ -200,14 +200,15 @@ class BusinessDataProcessor:
         Returns:
             list: List of businesses with basic contact information (filtered from API results)
         """
-        # Load businesses from Places API
-        businesses = self.load_from_places_api(city, business_type, target_count * 2)  # Get more to filter
+        # Load businesses from Places API - get enough to reach target
+        businesses = self.load_from_places_api(city, business_type, target_count * 3)  # Get more to ensure we reach target
         
         if not businesses:
             return []
         
-        # For each business, get detailed information to check for contact info
-        businesses_with_contact = []
+        # First priority: businesses with verified phone numbers
+        businesses_with_phone = []
+        businesses_without_phone = []
         
         for business in businesses:
             place_id = business.get('id')  # Nueva API usa 'id' en lugar de 'place_id'
@@ -221,13 +222,20 @@ class BusinessDataProcessor:
                         if phone:
                             # Merge basic info with detailed info
                             merged_business = {**business, **details}
-                            businesses_with_contact.append(merged_business)
-                            
-                            if len(businesses_with_contact) >= target_count:
-                                break
+                            businesses_with_phone.append(merged_business)
+                        else:
+                            # Still include businesses without phone, but mark them
+                            merged_business = {**business, **details}
+                            businesses_without_phone.append(merged_business)
                 except Exception as e:
                     self.output_writer.print(f"[warn] Error getting details for {place_id}: {e}")
                     continue
         
-        self.output_writer.print(f"[i] Found {len(businesses_with_contact)} businesses with contact info out of {len(businesses)} total")
-        return businesses_with_contact[:target_count]
+        # Combine results: first those with phone, then those without
+        final_results = businesses_with_phone + businesses_without_phone
+        
+        result_count = min(len(final_results), target_count)
+        selected_results = final_results[:result_count]
+        
+        self.output_writer.print(f"[i] Found {len(businesses_with_phone)} businesses with phone and {len(businesses_without_phone)} without phone. Returning {len(selected_results)} total")
+        return selected_results
