@@ -28,35 +28,62 @@ def _get(url, **kwargs):
 class PlacesAPIClient:
     """Cliente para interactuar con Google Places API."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, rate_limit_per_minute: int = 600):
         self.api_key = api_key
-        self.base_url = "https://maps.googleapis.com/maps/api/place"
+        self.base_url = "https://places.googleapis.com/v1"
+        self.rate_limit_per_minute = rate_limit_per_minute
+        self.min_delay_between_requests = 60.0 / rate_limit_per_minute  # segundos
+        self.last_request_time = 0
+    
+    def _rate_limit_delay(self):
+        """Aplica delay para respetar rate limit."""
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        if time_since_last < self.min_delay_between_requests:
+            sleep_time = self.min_delay_between_requests - time_since_last
+            time.sleep(sleep_time)
+        self.last_request_time = time.time()
     
     def text_search(self, query: str, limit: int = 120) -> List[Dict]:
-        """Busca lugares usando text search."""
-        url = f"{self.base_url}/textsearch/json"
+        """Busca lugares usando text search (Nueva API)."""
+        url = f"{self.base_url}/places:searchText"
         results = []
-        pagetoken = None
+        page_token = None
         
         while len(results) < limit:
-            params = {"query": query, "key": self.api_key}
-            if pagetoken:
-                params["pagetoken"] = pagetoken
-                time.sleep(2.0)  # Requisito de Google antes de usar next_page_token
+            self._rate_limit_delay()
+            
+            payload = {
+                "textQuery": query,
+                "maxResultCount": min(20, limit - len(results))  # Nueva API limita a 20 por request
+            }
+            if page_token:
+                payload["pageToken"] = page_token
+            
+            headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": self.api_key,
+                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber"
+            }
             
             try:
-                r = _get(url, params=params)
+                r = requests.post(url, json=payload, headers=headers, timeout=10)
+                r.raise_for_status()
                 data = r.json()
                 
-                if data.get("status") != "OK":
-                    print(f"[warn] Places API error: {data.get('status')} - {data.get('error_message', '')}")
+                if "places" in data:
+                    results.extend(data["places"])
+                    page_token = data.get("nextPageToken")
+                    
+                    if not page_token:
+                        break
+                    
+                    # Delay adicional entre páginas
+                    time.sleep(1.0)
+                else:
+                    print(f"[warn] No places found in response")
                     break
-                
-                results.extend(data.get("results", []))
-                pagetoken = data.get("next_page_token")
-                
-                if not pagetoken:
-                    break
+                    
             except requests.RequestException as e:
                 print(f"[error] Error en Places API: {e}")
                 break
@@ -64,28 +91,33 @@ class PlacesAPIClient:
         return results[:limit]
     
     def place_details(self, place_id: str) -> Dict:
-        """Obtiene detalles de un lugar específico."""
-        url = f"{self.base_url}/details/json"
-        fields = [
-            "place_id", "name", "formatted_phone_number", "international_phone_number",
-            "website", "formatted_address", "business_status", "url", "rating",
-            "user_ratings_total", "price_level", "opening_hours"
-        ]
-        params = {
-            "key": self.api_key,
-            "place_id": place_id,
-            "fields": ",".join(fields)
+        """Obtiene detalles de un lugar específico (Nueva API)."""
+        self._rate_limit_delay()
+        
+        url = f"{self.base_url}/places/{place_id}"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": self.api_key,
+            "X-Goog-FieldMask": "id,displayName,formattedAddress,internationalPhoneNumber,nationalPhoneNumber,websiteUri,businessStatus"
         }
         
         try:
-            r = _get(url, params=params)
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
             data = r.json()
             
-            if data.get("status") != "OK":
-                print(f"[warn] Place details error: {data.get('status')} - {data.get('error_message', '')}")
-                return {}
-            
-            return data.get("result", {})
+            # Normalizar respuesta para compatibilidad con código existente
+            return {
+                "place_id": data.get("id"),
+                "name": data.get("displayName", {}).get("text"),
+                "formatted_phone_number": data.get("nationalPhoneNumber") or data.get("internationalPhoneNumber"),
+                "international_phone_number": data.get("internationalPhoneNumber"),
+                "website": data.get("websiteUri"),
+                "formatted_address": data.get("formattedAddress"),
+                "business_status": data.get("businessStatus"),
+                "url": f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+            }
         except requests.RequestException as e:
             print(f"[error] Error obteniendo detalles: {e}")
             return {}

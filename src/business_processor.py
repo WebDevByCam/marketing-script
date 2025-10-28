@@ -17,10 +17,11 @@ class BusinessDataProcessor:
     """Procesador principal para recolectar y procesar datos de negocios."""
     
     def __init__(self, api_key: str = None, workers: int = 1, 
-                 humanize: bool = False, humanize_speed: float = 0.02):
+                 humanize: bool = False, humanize_speed: float = 0.02,
+                 rate_limit_per_minute: int = 600):
         self.api_key = api_key
         self.workers = workers
-        self.places_client = PlacesAPIClient(api_key) if api_key else None
+        self.places_client = PlacesAPIClient(api_key, rate_limit_per_minute=rate_limit_per_minute) if api_key else None
         self.email_scraper = EmailScraper()
         self.output_writer = OutputWriter(humanize, humanize_speed)
     
@@ -100,7 +101,7 @@ class BusinessDataProcessor:
     def process_item(self, item: Dict, scan_emails: bool = True) -> Dict:
         """Procesa un item individual (lugar o entrada de archivo)."""
         # Obtener detalles si es de Places API
-        place_id = item.get("place_id")
+        place_id = item.get("place_id") or item.get("id")
         data = item
         
         if place_id and self.places_client:
@@ -112,12 +113,13 @@ class BusinessDataProcessor:
                 self.output_writer.print(f"[warn] Error obteniendo detalles para {place_id}: {e}")
         
         # Extraer información básica
-        name = safe_get(data, "name") or safe_get(item, "name", default="")
+        name = safe_get(data, "name") or safe_get(data, "displayName", {}).get("text") or safe_get(item, "name", default="")
         phone = (safe_get(data, "formatted_phone_number") or 
-                safe_get(data, "international_phone_number") or 
+                safe_get(data, "nationalPhoneNumber") or 
+                safe_get(data, "internationalPhoneNumber") or 
                 safe_get(item, "formatted_phone_number", default=""))
-        website = safe_get(data, "website") or safe_get(item, "website") or safe_get(item, "url", default="")
-        address = safe_get(data, "formatted_address") or safe_get(item, "formatted_address", default="")
+        website = safe_get(data, "website") or safe_get(data, "websiteUri") or safe_get(item, "website") or safe_get(item, "url", default="")
+        address = safe_get(data, "formatted_address") or safe_get(data, "formattedAddress") or safe_get(item, "formatted_address", default="")
         existing_email = safe_get(item, "email", default="")
         
         # Buscar emails si se solicita y hay website
@@ -185,3 +187,47 @@ class BusinessDataProcessor:
                     self.output_writer.print(f"[i] Procesados {i}/{len(items)} ...")
         
         return results
+
+    def load_businesses_with_contact_info(self, city: str, business_type: str, target_count: int) -> List[Dict]:
+        """
+        Load businesses from Google Places API that have contact information.
+        
+        Args:
+            city (str): City and country for the search
+            business_type (str): Type of business to search for
+            target_count (int): Target number of businesses to return
+            
+        Returns:
+            list: List of businesses with basic contact information (filtered from API results)
+        """
+        # Load businesses from Places API
+        businesses = self.load_from_places_api(city, business_type, target_count * 2)  # Get more to filter
+        
+        if not businesses:
+            return []
+        
+        # For each business, get detailed information to check for contact info
+        businesses_with_contact = []
+        
+        for business in businesses:
+            place_id = business.get('id')  # Nueva API usa 'id' en lugar de 'place_id'
+            if place_id:
+                try:
+                    # Get detailed information for this business
+                    details = self.places_client.place_details(place_id)
+                    if details:
+                        # Check if it has phone number
+                        phone = details.get('formatted_phone_number') or details.get('international_phone_number')
+                        if phone:
+                            # Merge basic info with detailed info
+                            merged_business = {**business, **details}
+                            businesses_with_contact.append(merged_business)
+                            
+                            if len(businesses_with_contact) >= target_count:
+                                break
+                except Exception as e:
+                    self.output_writer.print(f"[warn] Error getting details for {place_id}: {e}")
+                    continue
+        
+        self.output_writer.print(f"[i] Found {len(businesses_with_contact)} businesses with contact info out of {len(businesses)} total")
+        return businesses_with_contact[:target_count]

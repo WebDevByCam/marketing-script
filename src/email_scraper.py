@@ -4,13 +4,28 @@ Scraper de emails de sitios web.
 import time
 import re
 from typing import List, Set, Dict
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .utils import normalize_url, same_registrable_domain, EMAIL_REGEX
 from .places_api import _get
+
+
+def check_robots_txt(base_url: str, user_agent: str = "*") -> bool:
+    """Verifica si se permite scrapear según robots.txt."""
+    try:
+        parsed = urlparse(base_url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        rp = RobotFileParser()
+        rp.set_url(robots_url)
+        rp.read()
+        return rp.can_fetch(user_agent, base_url)
+    except Exception:
+        # Si no se puede leer robots.txt, asumir permitido (mejor ser conservador)
+        return True
 
 
 def harvest_emails_from_html(html: str) -> Set[str]:
@@ -53,6 +68,11 @@ class EmailScraper:
         """Busca emails en un sitio web."""
         base_url = normalize_url(base_url)
         if not base_url:
+            return []
+        
+        # Verificar robots.txt antes de scrapear
+        if not check_robots_txt(base_url):
+            print(f"[warn] Robots.txt no permite scrapear {base_url}")
             return []
         
         emails = set()

@@ -6,17 +6,15 @@
 # Google Sheets (o en CSV/XLSX si lo pides).
 #
 # REQUISITOS
-# pip install: requests beautifulsoup4 python-dotenv pandas openpyxl tenacity tldextract gspread google-auth
+# pip install: requests beautifulsoup4 python-dotenv pandas openpyxl tenacity tldextract
 #
 # AUTENTICACIÓN
 # 1) Google Places API:
 #    - Habilita "Places API" en Google Cloud y crea una API Key.
 #    - Crea un archivo .env junto al script con: GOOGLE_API_KEY=TU_API_KEY
-# 2) Google Sheets (Service Account recomendado):
-#    - Crea una Service Account en Google Cloud y descarga el JSON de credenciales.
-#    - Comparte tu Google Sheet con el correo de la Service Account (Editor).
-#    - O define la ruta al JSON con la variable de entorno GOOGLE_APPLICATION_CREDENTIALS,
-#      o pásala con --sa-json al ejecutar el script.
+# 2) (Opcional) Google Sheets support was previously available. In this
+#    cleaned branch Google Sheets writing is disabled; use --outfile to
+#    export CSV/XLSX locally.
 #
 # USO EJEMPLO
 #   python mymaps_to_gsheets.py --city "Medellín" --type "hotel" \
@@ -40,13 +38,11 @@ import tldextract
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
 
-# Opcional: gspread (solo si escribes a Google Sheets)
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials as SACredentials
-except Exception:
-    gspread = None
-    SACredentials = None
+# NOTE: Google Sheets support removed/disabled in this branch to simplify
+# the local workflow. The original script used gspread; to avoid accidental
+# writes and extra dependencies, gspread-related code is disabled.
+gspread = None
+SACredentials = None
 
 EMAIL_REGEX = re.compile(
     r"[a-zA-Z0-9_.+%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
@@ -197,28 +193,8 @@ def place_details(api_key: str, place_id: str) -> dict:
 def build_query(city: str, biz_type: str) -> str:
     return f"{biz_type} in {city}"
 
-def write_to_gsheets(df: pd.DataFrame, spreadsheet_id: str, worksheet_title: str, sa_json_path: str | None):
-    import os
-    if gspread is None or SACredentials is None:
-        raise RuntimeError("gspread/google-auth no instalados. Ejecuta: pip install gspread google-auth")
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    if sa_json_path and os.path.exists(sa_json_path):
-        creds = SACredentials.from_service_account_file(sa_json_path, scopes=scopes)
-    else:
-        sa_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if sa_env and os.path.exists(sa_env):
-            creds = SACredentials.from_service_account_file(sa_env, scopes=scopes)
-        else:
-            raise RuntimeError("No se encontró el JSON de la Service Account. Usa --sa-json o GOOGLE_APPLICATION_CREDENTIALS.")
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(spreadsheet_id)
-    try:
-        ws = sh.worksheet(worksheet_title)
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=worksheet_title, rows="1000", cols="20")
-    ws.clear()
-    values = [list(df.columns)] + df.fillna("").values.tolist()
-    ws.update(range_name="A1", values=values)
+# write_to_gsheets removed: export to Google Sheets is disabled. Use --outfile
+# to save results locally in CSV/XLSX/TXT formats.
 
 def main():
     load_dotenv()
@@ -228,9 +204,7 @@ def main():
     parser.add_argument("--limit", type=int, default=200, help="Máx. resultados (default 200)")
     parser.add_argument("--email-scan-pages", type=int, default=5, help="Páginas a revisar por sitio (default 5)")
     parser.add_argument("--no-email-scan", action="store_true", help="No buscar correos en la web (más rápido)")
-    parser.add_argument("--gsheet-id", help="ID del Google Spreadsheet (si se setea, escribe en Sheets)")
-    parser.add_argument("--worksheet", default="Resultados", help="Nombre de la pestaña (default 'Resultados')")
-    parser.add_argument("--sa-json", help="Ruta al JSON de Service Account (si no usas variable de entorno)")
+    # Google Sheets export disabled: use --outfile to save locally (CSV/XLSX/TXT)
     parser.add_argument("--outfile", help="Opcional: también guardar en .csv o .xlsx")
     parser.add_argument("--input-file", help="Opcional: archivo de entrada con una URL por línea o 'nombre - sitio' por línea; si se setea, no usa Google Places API")
     parser.add_argument("--input-csv", help="Opcional: archivo CSV con columnas: Nombre,Teléfono,Correo,Página Web,Ciudad (usa estos valores si se proveen)")
@@ -402,10 +376,7 @@ def main():
         "Dirección (opcional)", "Google Maps URL (opcional)", "place_id (debug)"
     ])
 
-    if args.gsheet_id:
-        print(f"[i] Escribiendo en Google Sheets (spreadsheet={args.gsheet_id}, worksheet={args.worksheet})")
-        write_to_gsheets(df, args.gsheet_id, args.worksheet, args.sa_json)
-        print("[✓] Google Sheets actualizado.")
+    # Google Sheets export disabled: results are saved locally with --outfile or --out-txt
 
     if args.outfile:
         out = args.outfile
@@ -426,7 +397,7 @@ def main():
                 fh.write(line + "\n")
         print(f"[✓] Archivo de texto guardado -> {args.out_txt}")
 
-    if not args.gsheet_id and not args.outfile:
+    if not args.outfile:
         df.to_csv("resultados.csv", index=False, encoding="utf-8-sig")
         print("[i] No indicaste salida. Guardado por defecto -> resultados.csv")
 

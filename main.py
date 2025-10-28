@@ -40,13 +40,11 @@ Ejemplos de uso:
   python main.py --input-file empresas.csv --out-txt resultados.txt --workers 3
   
   # Modo completo con Google Sheets
-  python main.py --city "Bogotá" --type "restaurant" \\
-    --gsheet-id "1ABC...XYZ" --worksheet "Restaurantes" \\
-    --sa-json credenciales.json
+    # Ejemplo de uso con archivo de salida local
+    python main.py --city "Bogotá" --type "restaurant" --outfile restaurantes.xlsx
 
 Variables de entorno:
-  GOOGLE_API_KEY              - API key para Google Places
-  GOOGLE_APPLICATION_CREDENTIALS - Ruta al JSON de Service Account
+    GOOGLE_API_KEY              - API key para Google Places
         """
     )
     
@@ -67,6 +65,8 @@ Variables de entorno:
                        help="Saltear búsqueda de emails (más rápido)")
     parser.add_argument("--workers", type=int, default=1,
                        help="Número de workers paralelos (default: 1)")
+    parser.add_argument("--delay", type=float, default=1.0,
+                       help="Delay en segundos entre requests (default: 1.0)")
     
     # Salida
     parser.add_argument("--outfile", 
@@ -74,13 +74,7 @@ Variables de entorno:
     parser.add_argument("--out-txt", 
                        help="Archivo de texto simple adicional")
     
-    # Google Sheets
-    parser.add_argument("--gsheet-id", 
-                       help="ID del Google Spreadsheet")
-    parser.add_argument("--worksheet", default="Resultados",
-                       help="Nombre de la hoja (default: 'Resultados')")
-    parser.add_argument("--sa-json", 
-                       help="Ruta al JSON de Service Account")
+    # (Google Sheets support removed) Salida local: CSV/XLSX/TXT
     
     # Interfaz
     parser.add_argument("--humanize", action="store_true",
@@ -129,7 +123,7 @@ Variables de entorno:
         results = processor.process_batch(
             items, 
             scan_emails=not args.no_email_scan,
-            delay=0.3 if args.no_email_scan else 1.0
+            delay=args.delay
         )
         
         if not results:
@@ -141,11 +135,7 @@ Variables de entorno:
         # Escribir salidas
         output_writer = processor.output_writer
         
-        # Google Sheets
-        if args.gsheet_id:
-            output_writer.write_to_gsheets(
-                results, args.gsheet_id, args.worksheet, args.sa_json
-            )
+        # Nota: Google Sheets support removed. Use --outfile or --out-txt to export locally.
         
         # Archivo principal
         if args.outfile:
@@ -156,7 +146,7 @@ Variables de entorno:
             output_writer.write_to_txt(results, args.out_txt)
         
         # Salida por defecto si no se especifica nada
-        if not args.gsheet_id and not args.outfile and not args.out_txt:
+        if not args.outfile and not args.out_txt:
             default_file = "resultados.csv"
             output_writer.write_to_csv(results, default_file)
             output_writer.print(f"[i] No se especificó salida, guardado en: {default_file}")
