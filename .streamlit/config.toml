@@ -1,0 +1,46 @@
+[global]
+
+developmentMode = false
+
+[logger]
+
+level = "info"
+
+[client]
+
+showSidebarNavigation = true
+showErrorDetails = true
+
+[server]
+
+folderWatchBlacklist = ['']
+
+fileWatcherType = "auto"
+
+headless = false
+
+runOnSave = false
+
+address = "0.0.0.0"
+
+port = 8501
+
+baseUrlPath = ""
+
+enableCORS = false
+
+enableXsrfProtection = false
+
+maxUploadSize = 200
+
+maxMessageSize = 200
+
+enableWebsocketCompression = false
+
+[browser]
+
+serverAddress = "localhost"
+
+gatherUsageStats = false
+
+serverPort = 8501

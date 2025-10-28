@@ -199,7 +199,7 @@ class OutputWriter:
         self.print(f"[✓] Backup creado -> {backup_path}")
         return backup_path
 
-    def merge_into_existing_excel(self, existing_filepath: str, data: List[Dict], key_priority: list = None, create_backup: bool = True):
+    def merge_into_existing_excel(self, existing_filepath: str, data: List[Dict], key_priority: list = None, output_dir: str = None):
         """Fusiona `data` (lista de dicts) dentro de un archivo Excel existente.
 
         Reglas:
@@ -210,22 +210,56 @@ class OutputWriter:
           evitar variaciones simples (http(s), www, mayúsculas, caracteres).
         - Si no existe coincidencia, se añade una nueva fila al final con las
           columnas existentes (los campos que no estén disponibles se dejan vacíos).
+        - FILTRO: Solo se incluyen filas que tengan al menos WhatsApp o Telefono.
+        - NO sobrescribe el original: crea archivo nuevo en data/merged/ y renombra el original.
 
         Parámetros:
-        - existing_filepath: ruta al archivo Excel a actualizar (se sobrescribe).
+        - existing_filepath: ruta al archivo Excel original (NO se modifica).
         - data: lista de diccionarios con datos procesados.
         - key_priority: lista de columnas a usar como clave en orden de preferencia.
-        - create_backup: si True, crea backup automático antes de sobrescribir.
+        - output_dir: directorio donde guardar el merge (default: data/merged/).
+        
+        Retorna:
+        - Tupla (merged_filepath, renamed_original_filepath)
         """
         import re
+        import shutil
+        import re
+        import shutil
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        # Helper to clean values (handle NaN, None, etc.)
+        def clean_value(val):
+            if val is None or (isinstance(val, float) and str(val) == 'nan'):
+                return ''
+            return str(val).strip()
 
         if not data:
             self.print("[warn] No hay datos para fusionar en Excel existente")
-            return
+            return None, None
         
-        # Crear backup si se solicita
-        if create_backup:
-            self.create_backup(existing_filepath)
+        # NO filtrar filas sin teléfono ni WhatsApp - mantener todas las filas
+        # pero asegurar que tengan valores válidos
+        filtered_data = []
+        for item in data:
+            # Limpiar valores y asegurar que no sean NaN
+            whatsapp = clean_value(item.get('WhatsApp', ''))
+            telefono = clean_value(item.get('Telefono', ''))
+            telefono_alt = clean_value(item.get('Teléfono', ''))
+            
+            # Si no hay teléfono ni WhatsApp, poner N/A
+            if not whatsapp and not telefono and not telefono_alt:
+                # Crear una copia del item con valores N/A
+                cleaned_item = item.copy()
+                cleaned_item['WhatsApp'] = 'N/A'
+                cleaned_item['Telefono'] = 'N/A'
+                if 'Teléfono' in cleaned_item:
+                    cleaned_item['Teléfono'] = 'N/A'
+                filtered_data.append(cleaned_item)
+            else:
+                filtered_data.append(item)
+        
+        self.print(f"[i] Todas las filas mantenidas: {len(filtered_data)} de {len(data)}")
 
         if key_priority is None:
             key_priority = ["Pagina Web", "Nombre"]
@@ -234,6 +268,11 @@ class OutputWriter:
         if not os.path.exists(existing_filepath):
             raise FileNotFoundError(f"No existe el archivo Excel: {existing_filepath}")
 
+        # Cargar con openpyxl para preservar estilos
+        wb_original = load_workbook(existing_filepath)
+        ws_original = wb_original.active
+        
+        # Leer con pandas para manipulación de datos
         df_exist = pd.read_excel(existing_filepath)
 
         # Normalizar columnas: strip
@@ -279,8 +318,8 @@ class OutputWriter:
             # In Colombia mobiles start with '3' (e.g., 300,311,312,320...)
             return digits.startswith('3')
 
-        # Iterate new data and merge
-        for item in data:
+        # Iterate filtered_data and merge
+        for item in filtered_data:
             # build item key using same priority
             item_key_val = ""
             for k in key_priority:
@@ -301,13 +340,13 @@ class OutputWriter:
                         # Special handling: distribute phone between WhatsApp/Telefono
                         if col == 'WhatsApp':
                             # prefer explicit 'WhatsApp' in item, else try to detect
-                            val = item.get('WhatsApp') or item.get('Telefono') or item.get('Teléfono')
+                            val = clean_value(item.get('WhatsApp')) or clean_value(item.get('Telefono')) or clean_value(item.get('Teléfono'))
                             if val and not looks_like_mobile(val):
                                 # if detected as non-mobile, skip writing to WhatsApp
                                 continue
                             df_exist.at[idx, col] = val
                         elif col == 'Telefono':
-                            val = item.get('Telefono') or item.get('Teléfono') or item.get('phone')
+                            val = clean_value(item.get('Telefono')) or clean_value(item.get('Teléfono')) or clean_value(item.get('phone'))
                             # if this looks like mobile, prefer WhatsApp instead
                             if val and looks_like_mobile(val):
                                 # if Telefono column exists but we have a mobile, leave Telefono empty
@@ -328,13 +367,13 @@ class OutputWriter:
                     if c in item:
                         # map phone heuristics as above
                         if c == 'WhatsApp':
-                            val = item.get('WhatsApp') or item.get('Telefono') or item.get('Teléfono')
+                            val = clean_value(item.get('WhatsApp')) or clean_value(item.get('Telefono')) or clean_value(item.get('Teléfono'))
                             if val and not looks_like_mobile(val):
                                 # don't insert non-mobile into WhatsApp
                                 continue
                             new_row[c] = val
                         elif c == 'Telefono':
-                            val = item.get('Telefono') or item.get('Teléfono') or item.get('phone')
+                            val = clean_value(item.get('Telefono')) or clean_value(item.get('Teléfono')) or clean_value(item.get('phone'))
                             if val and looks_like_mobile(val):
                                 if 'WhatsApp' not in existing_cols:
                                     new_row[c] = val
@@ -344,13 +383,85 @@ class OutputWriter:
                             else:
                                 new_row[c] = val
                         else:
-                            new_row[c] = item.get(c, '')
-                df_exist = pd.concat([df_exist, pd.DataFrame([new_row])], ignore_index=True)
+                            new_row[c] = clean_value(item.get(c, ''))
+                    elif c == 'Unnamed: 0':
+                        # Para la columna de índice, usar el próximo índice disponible
+                        new_row[c] = len(df_exist)
+                
+                # Usar loc en lugar de concat para mayor confiabilidad
+                df_exist.loc[len(df_exist)] = new_row
 
-        # Guardar de vuelta sin cambiar las columnas existentes
-        # Mantener estilo simple: escribir por pandas (sobrescribe contenido)
-        df_exist.to_excel(existing_filepath, index=False, engine='openpyxl')
-        self.print(f"[✓] Archivo Excel actualizado -> {existing_filepath}")
+        # Preparar paths para el merge
+        if output_dir is None:
+            output_dir = os.path.join(os.path.dirname(existing_filepath), '..', 'merged')
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Nombres de archivos
+        original_filename = os.path.basename(existing_filepath)
+        name_without_ext = os.path.splitext(original_filename)[0]
+        ext = os.path.splitext(original_filename)[1]
+        
+        # Path del merged (tendrá el nombre original)
+        merged_filepath = os.path.join(output_dir, original_filename)
+        
+        # Path del original renombrado (se queda en input con " - original")
+        renamed_original = os.path.join(
+            os.path.dirname(existing_filepath),
+            f"{name_without_ext} - original{ext}"
+        )
+        
+        # Escribir el merged con pandas (temporal)
+        temp_file = merged_filepath + '.tmp' + ext
+        df_exist.to_excel(temp_file, index=False, engine='openpyxl')
+        
+        # Cargar el merged temporal con openpyxl para aplicar estilos
+        wb_merged = load_workbook(temp_file)
+        ws_merged = wb_merged.active
+        
+        # Copiar estilos del header original (fila 1)
+        header_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+        header_font = Font(name="Aptos Narrow", bold=True, size=16)
+        header_alignment = Alignment(horizontal="center", vertical="center")
+        
+        for col_idx, cell in enumerate(ws_merged[1], start=1):
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+        
+        # Copiar estilos de datos (fondo verde claro)
+        data_fill = PatternFill(start_color="FFC1F0C8", end_color="FFC1F0C8", fill_type="solid")
+        data_font = Font(name="Aptos Narrow", bold=False, size=11)
+        
+        for row_idx in range(2, ws_merged.max_row + 1):
+            for col_idx in range(1, ws_merged.max_column + 1):
+                cell = ws_merged.cell(row=row_idx, column=col_idx)
+                cell.fill = data_fill
+                cell.font = data_font
+                
+                # Primera columna (índice) en bold
+                if col_idx == 1:
+                    cell.font = Font(name="Aptos Narrow", bold=True, size=11)
+        
+        # Guardar el archivo merged final
+        wb_merged.save(merged_filepath)
+        os.remove(temp_file)  # Eliminar temporal
+        
+        # Renombrar el original
+        if os.path.exists(renamed_original):
+            # Si ya existe un "- original", añadir timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            renamed_original = os.path.join(
+                os.path.dirname(existing_filepath),
+                f"{name_without_ext} - original {timestamp}{ext}"
+            )
+        
+        shutil.move(existing_filepath, renamed_original)
+        
+        self.print(f"[✓] Archivo original renombrado -> {renamed_original}")
+        self.print(f"[✓] Archivo merged creado -> {merged_filepath}")
+        
+        return merged_filepath, renamed_original
     
     def auto_write(self, data: List[Dict], filepath: str):
         """Escribe automáticamente según la extensión del archivo."""

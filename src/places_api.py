@@ -63,7 +63,7 @@ class PlacesAPIClient:
             headers = {
                 "Content-Type": "application/json",
                 "X-Goog-Api-Key": self.api_key,
-                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.priceLevel,places.rating,places.userRatingCount,places.websiteUri,places.regularOpeningHours,places.businessStatus"
+                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber"
             }
             
             try:
@@ -99,7 +99,7 @@ class PlacesAPIClient:
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": self.api_key,
-            "X-Goog-FieldMask": "id,displayName,formattedAddress,internationalPhoneNumber,nationalPhoneNumber,websiteUri,currentOpeningHours,regularOpeningHours,rating,userRatingCount,priceLevel,businessStatus,location"
+            "X-Goog-FieldMask": "id,displayName,formattedAddress,internationalPhoneNumber,nationalPhoneNumber,websiteUri,businessStatus"
         }
         
         try:
@@ -116,10 +116,7 @@ class PlacesAPIClient:
                 "website": data.get("websiteUri"),
                 "formatted_address": data.get("formattedAddress"),
                 "business_status": data.get("businessStatus"),
-                "url": f"https://www.google.com/maps/place/?q=place_id:{place_id}",
-                "rating": data.get("rating"),
-                "user_ratings_total": data.get("userRatingCount"),
-                "price_level": data.get("priceLevel")
+                "url": f"https://www.google.com/maps/place/?q=place_id:{place_id}"
             }
         except requests.RequestException as e:
             print(f"[error] Error obteniendo detalles: {e}")

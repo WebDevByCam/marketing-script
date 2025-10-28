@@ -187,3 +187,47 @@ class BusinessDataProcessor:
                     self.output_writer.print(f"[i] Procesados {i}/{len(items)} ...")
         
         return results
+
+    def load_businesses_with_contact_info(self, city: str, business_type: str, target_count: int) -> List[Dict]:
+        """
+        Load businesses from Google Places API that have contact information.
+        
+        Args:
+            city (str): City and country for the search
+            business_type (str): Type of business to search for
+            target_count (int): Target number of businesses to return
+            
+        Returns:
+            list: List of businesses with basic contact information (filtered from API results)
+        """
+        # Load businesses from Places API
+        businesses = self.load_from_places_api(city, business_type, target_count * 2)  # Get more to filter
+        
+        if not businesses:
+            return []
+        
+        # For each business, get detailed information to check for contact info
+        businesses_with_contact = []
+        
+        for business in businesses:
+            place_id = business.get('id')  # Nueva API usa 'id' en lugar de 'place_id'
+            if place_id:
+                try:
+                    # Get detailed information for this business
+                    details = self.places_client.place_details(place_id)
+                    if details:
+                        # Check if it has phone number
+                        phone = details.get('formatted_phone_number') or details.get('international_phone_number')
+                        if phone:
+                            # Merge basic info with detailed info
+                            merged_business = {**business, **details}
+                            businesses_with_contact.append(merged_business)
+                            
+                            if len(businesses_with_contact) >= target_count:
+                                break
+                except Exception as e:
+                    self.output_writer.print(f"[warn] Error getting details for {place_id}: {e}")
+                    continue
+        
+        self.output_writer.print(f"[i] Found {len(businesses_with_contact)} businesses with contact info out of {len(businesses)} total")
+        return businesses_with_contact[:target_count]

@@ -105,16 +105,8 @@ def main():
     print("🔍 Iniciando búsqueda...")
     print()
     
-    # Crear backup del Excel de input si existe
-    if input_excel:
-        try:
-            output_writer = OutputWriter(humanize=False)
-            backup_path = output_writer.create_backup(input_excel)
-            print(f"✅ Backup creado: {backup_path}")
-            print()
-        except Exception as e:
-            print(f"⚠️  No se pudo crear backup: {e}")
-            print()
+    # NO crear backup del Excel de input (ya no sobrescribimos)
+    # El merge creará un archivo nuevo en data/merged/ preservando el original
     
     # Inicializar procesador con rate limiting de 600 req/min
     processor = BusinessDataProcessor(
@@ -125,21 +117,25 @@ def main():
     )
     
     try:
-        # Buscar en Places API
-        results = processor.load_from_places_api(
+        # Buscar empresas con información de contacto (teléfono o WhatsApp)
+        print("🔍 Buscando empresas con información de contacto...")
+        print(f"   (Se buscarán hasta obtener exactamente {cantidad} con teléfono o WhatsApp)")
+        print()
+        
+        results = processor.load_businesses_with_contact_info(
             city=ciudad,
             business_type=tipo_negocio,
-            limit=cantidad
+            target_count=cantidad
         )
         
         if not results:
-            print("❌ No se encontraron resultados.")
+            print("❌ No se encontraron resultados con información de contacto.")
             return 1
         
-        print(f"✅ Se encontraron {len(results)} resultados")
+        print(f"✅ Se encontraron {len(results)} resultados con información de contacto")
         print()
         
-        # Procesar resultados (obtener detalles, escanear emails opcional)
+        # Procesar resultados (obtener detalles completos, escanear emails opcional)
         print("🔄 Procesando resultados...")
         scan_emails = input("¿Escanear páginas web en busca de emails? (s/n): ").lower().strip()
         scan_emails = scan_emails in ['s', 'si', 'sí', 'y', 'yes']
@@ -148,7 +144,8 @@ def main():
         processed_data = processor.process_batch(
             items=results,
             scan_emails=scan_emails,
-            delay=0  # El rate limiting ya está manejado en PlacesAPIClient
+            delay=0,  # El rate limiting ya está manejado en PlacesAPIClient
+            ciudad=ciudad
         )
         
         # Generar nombre descriptivo para el archivo de salida
@@ -174,6 +171,7 @@ def main():
         print("=" * 70)
         print(f"📊 Archivo generado: {output_path}")
         print(f"📈 Total de registros: {len(processed_data)}")
+        print(f"   (Todos tienen teléfono o WhatsApp)")
         print()
         print("📋 PRÓXIMOS PASOS:")
         print("   1. Revisa el archivo generado en data/output/")

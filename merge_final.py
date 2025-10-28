@@ -66,8 +66,9 @@ def main():
     print()
     
     # Confirmación
-    print("⚠️  ADVERTENCIA: Este proceso modificará tu Excel maestro.")
-    print("   (Se creará un backup automático antes de modificar)")
+    print("ℹ️  INFORMACIÓN: Este proceso NO modificará tu Excel maestro.")
+    print("   Se creará un archivo nuevo en data/merged/ y el original se")
+    print("   renombrará a '{nombre} - original.xlsx' en data/input/")
     print()
     confirmar = input("¿Continuar con el merge? (s/n): ").lower().strip()
     
@@ -90,25 +91,34 @@ def main():
         
         print(f"✅ Leídos {len(new_data)} registros del archivo de salida")
         
-        # Hacer merge (crea backup automáticamente)
-        writer.merge_into_existing_excel(
+        # Hacer merge (NO crea backup, crea nuevo archivo en merged/)
+        merged_path, renamed_original = writer.merge_into_existing_excel(
             existing_filepath=input_file,
             data=new_data,
             key_priority=['Pagina Web', 'Nombre'],
-            create_backup=True
+            output_dir=None  # Usa default: data/merged/
         )
         
-        print()
-        print("=" * 70)
-        print("✅ MERGE COMPLETADO EXITOSAMENTE")
-        print("=" * 70)
-        print(f"📊 Archivo actualizado: {input_file}")
-        print(f"💾 Backup creado en: data/backups/")
-        print()
-        print("📋 PRÓXIMOS PASOS:")
-        print("   • Abre el Excel maestro y verifica los cambios")
-        print("   • Si hay algún problema, puedes restaurar desde data/backups/")
-        print("=" * 70)
+        if merged_path and renamed_original:
+            print()
+            print("=" * 70)
+            print("✅ MERGE COMPLETADO EXITOSAMENTE")
+            print("=" * 70)
+            print(f"📊 Archivo merged: {merged_path}")
+            print(f"📁 Original renombrado: {renamed_original}")
+            print()
+            print("� ESTRUCTURA:")
+            print(f"   • data/input/{os.path.basename(renamed_original)} <- Original preservado")
+            print(f"   • data/merged/{os.path.basename(merged_path)} <- Resultado del merge")
+            print()
+            print("� PRÓXIMOS PASOS:")
+            print("   • Abre el archivo merged y verifica los cambios")
+            print("   • El original está preservado en data/input/")
+            print("   • Si todo está correcto, usa el merged como tu nueva base")
+            print("=" * 70)
+        else:
+            print()
+            print("⚠️  No se pudo completar el merge (posiblemente no hay datos válidos)")
         
         return 0
         
