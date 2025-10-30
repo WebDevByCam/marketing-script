@@ -114,13 +114,48 @@ class BusinessDataProcessor:
         
         # Extraer información básica
         name = safe_get(data, "name") or safe_get(data, "displayName", {}).get("text") or safe_get(item, "name", default="")
-        phone = (safe_get(data, "formatted_phone_number") or 
-                safe_get(data, "nationalPhoneNumber") or 
-                safe_get(data, "internationalPhoneNumber") or 
-                safe_get(item, "formatted_phone_number", default=""))
+        
+        # Usar los campos separados de WhatsApp y Teléfono si existen
+        whatsapp = safe_get(data, "whatsapp") or safe_get(item, "whatsapp", default="")
+        telefono = safe_get(data, "telefono") or safe_get(item, "telefono", default="")
+        
+        # Si no tenemos separados, usar el teléfono general y determinar
+        if not whatsapp and not telefono:
+            phone = (safe_get(data, "formatted_phone_number") or 
+                    safe_get(data, "nationalPhoneNumber") or 
+                    safe_get(data, "internationalPhoneNumber") or 
+                    safe_get(item, "formatted_phone_number", default=""))
+            
+            if phone:
+                # Limpiar el número para análisis
+                clean_number = ''.join(filter(str.isdigit, phone))
+                
+                # En Colombia: números que empiezan con 573 o 3 son móviles (probablemente WhatsApp)
+                if clean_number.startswith('573') or (len(clean_number) == 10 and clean_number.startswith('3')):
+                    whatsapp = phone
+                else:
+                    telefono = phone
+        
         website = safe_get(data, "website") or safe_get(data, "websiteUri") or safe_get(item, "website") or safe_get(item, "url", default="")
         address = safe_get(data, "formatted_address") or safe_get(data, "formattedAddress") or safe_get(item, "formatted_address", default="")
         existing_email = safe_get(item, "email", default="")
+        
+        # Filtrar URLs que no son páginas web reales (WhatsApp, redes sociales, Google Maps)
+        if website:
+            website_lower = website.lower()
+            # URLs a excluir
+            excluded_domains = [
+                'wa.me', 'wa.link', 'whatsapp.com', 'web.whatsapp.com',
+                'instagram.com', 'facebook.com', 'twitter.com', 'tiktok.com',
+                'linkedin.com', 'youtube.com', 'maps.google.com', 'goo.gl',
+                'bit.ly', 'tinyurl.com', 't.co'
+            ]
+            
+            # Verificar si la URL contiene alguno de los dominios excluidos
+            is_excluded = any(domain in website_lower for domain in excluded_domains)
+            
+            if is_excluded:
+                website = ""  # Marcar como vacío para que se convierta en "N/A"
         
         # Buscar emails si se solicita y hay website
         email_list = []
@@ -134,13 +169,14 @@ class BusinessDataProcessor:
         
         return {
             "Nombre": name.strip(),
-            "Teléfono": clean_phone(phone).strip() if phone else "N/A",
+            "WhatsApp": clean_phone(whatsapp).strip() if whatsapp else "N/A",
+            "Telefono": clean_phone(telefono).strip() if telefono else "N/A",
             "Correo": ", ".join(email_list) if email_list else "N/A",
             "Página Web": website.strip() if website else "N/A",
-            "Ciudad": city or safe_get(item, "city", default=""),
-            "Dirección (opcional)": address.strip(),
-            "Google Maps URL (opcional)": safe_get(data, "url", default=""),
-            "place_id (debug)": place_id or ""
+            "Ciudad": city or safe_get(item, "city", default="N/A"),
+            "Dirección (opcional)": address.strip() if address else "N/A",
+            "Google Maps URL (opcional)": safe_get(data, "url", default="N/A") if website else "N/A",
+            "place_id (debug)": place_id or "N/A"
         }
     
     def process_batch(self, items: List[Dict], scan_emails: bool = True, 
@@ -201,49 +237,281 @@ class BusinessDataProcessor:
         Returns:
             list: List of businesses with basic contact information (filtered from API results)
         """
-        # Add search variation to avoid duplicate results
+        all_businesses_with_phone = []
+        all_businesses_without_phone = []
+        attempts = 0
+        max_attempts = 5  # Máximo número de búsquedas diferentes
+        
+        # Lista de variaciones para intentar si no alcanzamos el target
+        variations_to_try = [search_variation]
         if search_variation:
-            # Add variation terms to the business type
-            varied_business_type = f"{business_type} {search_variation}"
-        else:
-            varied_business_type = business_type
+            # Agregar algunas variaciones adicionales si tenemos una variación base
+            variations_to_try.extend([
+                f"{search_variation} zona",
+                f"{search_variation} area", 
+                f"{search_variation} sector",
+                f"{search_variation} barrio"
+            ])
+        
+        for current_variation in variations_to_try:
+            if len(all_businesses_with_phone) >= target_count:
+                break
+                
+            attempts += 1
+            if attempts > max_attempts:
+                break
             
-        # Load businesses from Places API - get enough to reach target
-        businesses = self.load_from_places_api(city, varied_business_type, target_count * 3)  # Get more to ensure we reach target
+            # Add search variation to avoid duplicate results
+            if current_variation:
+                # Add variation terms to the business type
+                varied_business_type = f"{business_type} {current_variation}"
+            else:
+                varied_business_type = business_type
+                
+            # Load businesses from Places API - get enough to reach target
+            remaining_needed = target_count - len(all_businesses_with_phone)
+            search_limit = max(remaining_needed * 3, 60)  # Buscar al menos 60 resultados por intento
+            
+            businesses = self.load_from_places_api(city, varied_business_type, search_limit)
+            
+            if not businesses:
+                continue
+            
+            # Process businesses directly from text_search results - NO additional API calls
+            businesses_with_phone = []
+            businesses_without_phone = []
+            
+            for business in businesses:
+                # Process data directly from text_search result
+                processed_business = self._process_text_search_result(business)
+                
+                # Check if it has phone number
+                phone = processed_business.get('formatted_phone_number')
+                if phone and phone.strip():
+                    businesses_with_phone.append(processed_business)
+                else:
+                    businesses_without_phone.append(processed_business)
+            
+            # Agregar a las listas globales, evitando duplicados por place_id
+            existing_place_ids = {b.get('id') or b.get('place_id') for b in all_businesses_with_phone}
+            
+            for business in businesses_with_phone:
+                place_id = business.get('id') or business.get('place_id')
+                if place_id and place_id not in existing_place_ids:
+                    all_businesses_with_phone.append(business)
+                    existing_place_ids.add(place_id)
+            
+            for business in businesses_without_phone:
+                place_id = business.get('id') or business.get('place_id')
+                if place_id and place_id not in existing_place_ids:
+                    all_businesses_without_phone.append(business)
+                    existing_place_ids.add(place_id)
+            
+            self.output_writer.print(f"[i] Attempt {attempts}: Found {len(businesses_with_phone)} new businesses with phone. Total: {len(all_businesses_with_phone)}")
         
-        if not businesses:
-            return []
-        
-        # First priority: businesses with verified phone numbers
-        businesses_with_phone = []
-        businesses_without_phone = []
-        
-        for business in businesses:
-            place_id = business.get('id')  # Nueva API usa 'id' en lugar de 'place_id'
-            if place_id:
-                try:
-                    # Get detailed information for this business
-                    details = self.places_client.place_details(place_id)
-                    if details:
-                        # Check if it has phone number
-                        phone = details.get('formatted_phone_number') or details.get('international_phone_number')
-                        if phone:
-                            # Merge basic info with detailed info
-                            merged_business = {**business, **details}
-                            businesses_with_phone.append(merged_business)
-                        else:
-                            # Still include businesses without phone, but mark them
-                            merged_business = {**business, **details}
-                            businesses_without_phone.append(merged_business)
-                except Exception as e:
-                    self.output_writer.print(f"[warn] Error getting details for {place_id}: {e}")
-                    continue
-        
-        # Combine results: first those with phone, then those without
-        final_results = businesses_with_phone + businesses_without_phone
+        # Combine results: ONLY those with phone numbers
+        final_results = all_businesses_with_phone
         
         result_count = min(len(final_results), target_count)
         selected_results = final_results[:result_count]
         
-        self.output_writer.print(f"[i] Found {len(businesses_with_phone)} businesses with phone and {len(businesses_without_phone)} without phone. Returning {len(selected_results)} total")
+        self.output_writer.print(f"[i] Found {len(all_businesses_with_phone)} businesses with phone and {len(all_businesses_without_phone)} without phone. Returning {len(selected_results)} total after {attempts} attempts")
+        return selected_results
+        """Procesa un resultado de text_search al formato interno esperado."""
+        # Extraer datos directamente del resultado de text_search
+        place_id = business.get('id')
+        display_name = business.get('displayName', {})
+        name = display_name.get('text') if isinstance(display_name, dict) else str(display_name)
+        
+        # Teléfonos - usar national primero, luego international
+        phone = (business.get('nationalPhoneNumber') or 
+                business.get('internationalPhoneNumber'))
+        
+        website = business.get('websiteUri')
+        address = business.get('formattedAddress')
+        
+        # Crear URL de Google Maps
+        maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}" if place_id else ""
+        
+        # Determinar si es WhatsApp o teléfono fijo
+        whatsapp = None
+        telefono = None
+        
+        if phone:
+            # Limpiar el número para análisis
+            clean_number = ''.join(filter(str.isdigit, phone))
+            
+            # En Colombia: números que empiezan con 3 son móviles (probablemente WhatsApp)
+            if clean_number.startswith('573') or (len(clean_number) == 10 and clean_number.startswith('3')):
+                whatsapp = phone
+            else:
+                telefono = phone
+        
+        return {
+            'place_id': place_id,
+            'id': place_id,  # Para compatibilidad
+            'name': name,
+            'displayName': display_name,
+            'formatted_phone_number': phone,
+            'nationalPhoneNumber': business.get('nationalPhoneNumber'),
+            'internationalPhoneNumber': business.get('internationalPhoneNumber'),
+            'website': website,
+            'websiteUri': website,
+            'formatted_address': address,
+            'formattedAddress': address,
+            'business_status': business.get('businessStatus'),
+            'types': business.get('types', []),
+            'location': business.get('location'),
+            'priceLevel': business.get('priceLevel'),
+            'rating': business.get('rating'),
+            'userRatingCount': business.get('userRatingCount'),
+            'url': maps_url,
+            'whatsapp': whatsapp,  # Nuevo campo
+            'telefono': telefono  # Nuevo campo
+        }
+        """
+        Load businesses from Google Places API that have contact information.
+        
+        Args:
+            city (str): City and country for the search
+            business_type (str): Type of business to search for
+            target_count (int): Target number of businesses to return
+            search_variation (str): Additional search terms to add variety
+            
+        Returns:
+            list: List of businesses with basic contact information (filtered from API results)
+        """
+        all_businesses_with_phone = []
+        all_businesses_without_phone = []
+        attempts = 0
+        max_attempts = 5  # Máximo número de búsquedas diferentes
+        
+        # Lista de variaciones para intentar si no alcanzamos el target
+        variations_to_try = [search_variation]
+        if search_variation:
+            # Agregar algunas variaciones adicionales si tenemos una variación base
+            variations_to_try.extend([
+                f"{search_variation} zona",
+                f"{search_variation} area",
+                f"{search_variation} sector",
+                f"{search_variation} barrio"
+            ])
+        
+        for current_variation in variations_to_try:
+            if len(all_businesses_with_phone) >= target_count:
+                break
+                
+            attempts += 1
+            if attempts > max_attempts:
+                break
+            
+            # Add search variation to avoid duplicate results
+            if current_variation:
+                # Add variation terms to the business type
+                varied_business_type = f"{business_type} {current_variation}"
+            else:
+                varied_business_type = business_type
+                
+            # Load businesses from Places API - get enough to reach target
+            remaining_needed = target_count - len(all_businesses_with_phone)
+            search_limit = max(remaining_needed * 3, 60)  # Buscar al menos 60 resultados por intento
+            
+            businesses = self.load_from_places_api(city, varied_business_type, search_limit)
+            
+            if not businesses:
+                continue
+            
+            # Process businesses directly from text_search results - NO additional API calls
+            businesses_with_phone = []
+            businesses_without_phone = []
+            
+            for business in businesses:
+                # Process data directly from text_search result
+                processed_business = self._process_text_search_result(business)
+                
+                # Check if it has phone number
+                phone = processed_business.get('formatted_phone_number')
+                if phone and phone.strip():
+                    businesses_with_phone.append(processed_business)
+                else:
+                    businesses_without_phone.append(processed_business)
+            
+            # Agregar a las listas globales, evitando duplicados por place_id
+            existing_place_ids = {b.get('id') or b.get('place_id') for b in all_businesses_with_phone}
+            
+            for business in businesses_with_phone:
+                place_id = business.get('id') or business.get('place_id')
+                if place_id and place_id not in existing_place_ids:
+                    all_businesses_with_phone.append(business)
+                    existing_place_ids.add(place_id)
+            
+            for business in businesses_without_phone:
+                place_id = business.get('id') or business.get('place_id')
+                if place_id and place_id not in existing_place_ids:
+                    all_businesses_without_phone.append(business)
+                    existing_place_ids.add(place_id)
+            
+            self.output_writer.print(f"[i] Attempt {attempts}: Found {len(businesses_with_phone)} new businesses with phone. Total: {len(all_businesses_with_phone)}")
+        
+        # Combine results: ONLY those with phone numbers
+        final_results = all_businesses_with_phone
+        
+        result_count = min(len(final_results), target_count)
+        selected_results = final_results[:result_count]
+        
+        self.output_writer.print(f"[i] Found {len(all_businesses_with_phone)} businesses with phone and {len(all_businesses_without_phone)} without phone. Returning {len(selected_results)} total after {attempts} attempts")
+        return selected_results
+    def _process_text_search_result(self, business: Dict) -> Dict:
+        """Procesa un resultado de text_search al formato interno esperado."""
+        # Extraer datos directamente del resultado de text_search
+        place_id = business.get("id")
+        display_name = business.get("displayName", {})
+        name = display_name.get("text") if isinstance(display_name, dict) else str(display_name)
+        
+        # Teléfonos - usar national primero, luego international
+        phone = (business.get("nationalPhoneNumber") or 
+                business.get("internationalPhoneNumber"))
+        
+        website = business.get("websiteUri")
+        address = business.get("formattedAddress")
+        
+        # Crear URL de Google Maps
+        maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}" if place_id else ""
+        
+        # Determinar si es WhatsApp o teléfono fijo
+        whatsapp = None
+        telefono = None
+        
+        if phone:
+            # Limpiar el número para análisis
+            clean_number = "".join(filter(str.isdigit, phone))
+            
+            # En Colombia: números que empiezan con 3 son móviles (probablemente WhatsApp)
+            if clean_number.startswith("573") or (len(clean_number) == 10 and clean_number.startswith("3")):
+                whatsapp = phone
+            else:
+                telefono = phone
+        
+        return {
+            "place_id": place_id,
+            "id": place_id,  # Para compatibilidad
+            "name": name,
+            "displayName": display_name,
+            "formatted_phone_number": phone,
+            "nationalPhoneNumber": business.get("nationalPhoneNumber"),
+            "internationalPhoneNumber": business.get("internationalPhoneNumber"),
+            "website": website,
+            "websiteUri": website,
+            "formatted_address": address,
+            "formattedAddress": address,
+            "business_status": business.get("businessStatus"),
+            "types": business.get("types", []),
+            "location": business.get("location"),
+            "priceLevel": business.get("priceLevel"),
+            "rating": business.get("rating"),
+            "userRatingCount": business.get("userRatingCount"),
+            "url": maps_url,
+            "whatsapp": whatsapp,  # Nuevo campo
+            "telefono": telefono  # Nuevo campo
+        }
         return selected_results

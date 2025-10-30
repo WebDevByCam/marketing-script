@@ -7,7 +7,7 @@ import random
 from typing import List, Dict
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # Google Sheets integration has been removed from the core writer to keep
 # the project lightweight. If you need to re-add Sheets support, reintroduce
@@ -36,6 +36,29 @@ class OutputWriter:
         self.humanize = humanize
         self.humanize_speed = humanize_speed
     
+    def _filter_website_url(self, url):
+        """Filtra URLs que no son páginas web reales."""
+        if not url or pd.isna(url) or str(url).strip().upper() in ['N/A', '']:
+            return "N/A"
+        
+        url_str = str(url).lower().strip()
+        
+        # URLs a excluir
+        excluded_domains = [
+            'wa.me', 'wa.link', 'whatsapp.com', 'web.whatsapp.com',
+            'instagram.com', 'facebook.com', 'twitter.com', 'tiktok.com',
+            'linkedin.com', 'youtube.com', 'maps.google.com', 'goo.gl',
+            'bit.ly', 'tinyurl.com', 't.co'
+        ]
+        
+        # Verificar si la URL contiene alguno de los dominios excluidos
+        is_excluded = any(domain in url_str for domain in excluded_domains)
+        
+        if is_excluded:
+            return "N/A"
+        else:
+            return url
+    
     def print(self, text: str):
         """Imprime texto con o sin efecto de tipeo."""
         human_print(text, self.humanize, self.humanize_speed)
@@ -63,6 +86,20 @@ class OutputWriter:
         # Normalizar y ordenar columnas según el formato solicitado
         df = pd.DataFrame(data)
 
+        # Aplicar correcciones antes de guardar
+        # 1. Filtrar URLs no deseadas
+        if 'Página Web' in df.columns or 'Pagina Web' in df.columns:
+            col_name = 'Página Web' if 'Página Web' in df.columns else 'Pagina Web'
+            df[col_name] = df[col_name].apply(self._filter_website_url)
+        
+        # 2. Convertir números a string para evitar ".0"
+        df = df.astype(str)
+        
+        # 3. Reemplazar valores vacíos y NaN con "N/A"
+        df = df.replace('', 'N/A')
+        df = df.replace('nan', 'N/A')
+        df = df.replace('NaN', 'N/A')
+
         if use_template_columns:
             # Usar solo columnas del template (sin debug ni opcionales)
             template_cols = [
@@ -89,7 +126,7 @@ class OutputWriter:
             # Asegurar que las columnas existan
             for c in template_cols:
                 if c not in df.columns:
-                    df[c] = ""
+                    df[c] = "N/A"
             
             df_out = df[template_cols]
         else:
@@ -121,7 +158,7 @@ class OutputWriter:
             # Asegurar que las columnas existan
             for c in target_cols:
                 if c not in df.columns:
-                    df[c] = ""
+                    df[c] = "N/A"
 
             df_out = df[target_cols]
 
@@ -131,11 +168,43 @@ class OutputWriter:
         try:
             wb = load_workbook(filepath)
             ws = wb.active
+            
+            # Definir estilos
             header_fill = PatternFill(start_color="FFF59D", end_color="FFF59D", fill_type="solid")
             header_font = Font(bold=True)
+            header_alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Definir borde completo
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # Obtener índices de columnas que necesitan alineación centrada
+            columns_to_center = []
+            for col_idx, col_name in enumerate(df_out.columns, start=1):
+                if col_name in ['WhatsApp', 'Telefono', 'Correo']:
+                    columns_to_center.append(col_idx)
+            
+            # Aplicar estilos al encabezado
             for cell in ws[1]:
                 cell.fill = header_fill
                 cell.font = header_font
+                cell.alignment = header_alignment
+                cell.border = thin_border
+            
+            # Aplicar estilos a las filas de datos
+            for row in range(2, ws.max_row + 1):
+                for col in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=row, column=col)
+                    cell.border = thin_border
+                    
+                    # Aplicar alineación centrada a columnas específicas
+                    if col in columns_to_center:
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+            
             wb.save(filepath)
         except Exception:
             # Si falla el formateo, no interrumpir el flujo

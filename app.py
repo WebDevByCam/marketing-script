@@ -42,6 +42,8 @@ if 'output_file' not in st.session_state:
     st.session_state.output_file = None
 if 'merge_completed' not in st.session_state:
     st.session_state.merge_completed = False
+if 'used_neighborhoods' not in st.session_state:
+    st.session_state.used_neighborhoods = {}
 
 # ===== CONFIGURACIÓN DE AUTENTICACIÓN =====
 def get_auth_config():
@@ -191,7 +193,9 @@ def get_city_neighborhoods(city):
         # Bucaramanga
         "bucaramanga": ["Centro", "Cabecera", "La Concordia", "El Prado", "Floridablanca",
                        "Girón", "Piedecuesta", "Zona Rosa", "La Cumbre", "Altos de San Ignacio",
-                       "Ciudadela Real de Minas", "El Bosque", "La Joya", "San Alonso"],
+                       "Ciudadela Real de Minas", "El Bosque", "La Joya", "San Alonso",
+                       "La Flora", "El Carmen", "La Victoria", "San Francisco", "La Paz",
+                       "Villa del Prado", "El Jardín", "La Esperanza", "San Miguel", "La Rivera"],
 
         # Pereira
         "pereira": ["Centro", "Circular", "Cuba", "El Oso", "Dosquebradas", "La Florida",
@@ -262,11 +266,35 @@ def run_search(city, business_type, target_count, scan_emails, progress_callback
 
         # Generar variación de búsqueda por barrios para evitar resultados duplicados
         neighborhoods = get_city_neighborhoods(city)
-        # Agregar opción de búsqueda sin barrio específico (30% de probabilidad)
-        if random.random() < 0.3:
+        
+        # Sistema inteligente de selección de barrios para maximizar variedad
+        used_neighborhoods = getattr(st.session_state, 'used_neighborhoods', {}).get(city.lower(), [])
+        
+        # Filtrar barrios que ya se usaron recientemente (últimas 5 búsquedas)
+        available_neighborhoods = [n for n in neighborhoods if n not in used_neighborhoods[-5:]]
+        
+        # Si no quedan barrios disponibles, resetear la lista
+        if not available_neighborhoods:
+            available_neighborhoods = neighborhoods
+            used_neighborhoods = []
+        
+        # 40% de probabilidad de búsqueda sin barrio específico
+        if random.random() < 0.4:
             search_variation = ""  # Sin barrio específico
+            variation_type = "general"
         else:
-            search_variation = random.choice(neighborhoods)
+            search_variation = random.choice(available_neighborhoods)
+            variation_type = f"barrio: {search_variation}"
+            
+            # Registrar el barrio usado
+            if city.lower() not in st.session_state.get('used_neighborhoods', {}):
+                st.session_state.used_neighborhoods = {}
+            if city.lower() not in st.session_state.used_neighborhoods:
+                st.session_state.used_neighborhoods[city.lower()] = []
+            st.session_state.used_neighborhoods[city.lower()].append(search_variation)
+
+        if progress_callback:
+            progress_callback(f"🔍 Buscando en {variation_type}...")
 
         results = processor.load_businesses_with_contact_info(
             city=city,
@@ -566,6 +594,11 @@ def show_search_page():
         if result['processed_data']:
             st.markdown("### 📋 Resultados de la Búsqueda")
             df = pd.DataFrame(result['processed_data'])
+            # Reemplazar valores vacíos/NaN con "N/A" para mejor visualización
+            df = df.fillna("N/A")
+            df = df.replace("", "N/A")
+            # Asegurar que los tipos de datos sean strings para evitar ".0" en números
+            df = df.astype(str)
             st.dataframe(df, use_container_width=True)
 
             # Botón de descarga
@@ -700,6 +733,49 @@ def show_merge_page():
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     use_container_width=True
                 )
+
+        # Opción para usar el archivo merged como nuevo input
+        st.markdown("---")
+        st.markdown("### 🔄 Gestión Post-Merge")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Usar Merged como Nuevo Input", use_container_width=True, type="primary"):
+                with st.spinner("Moviendo archivo merged a input..."):
+                    # Importar la función
+                    sys.path.insert(0, os.path.dirname(__file__))
+                    from post_merge_manager import move_merged_to_input
+
+                    move_result = move_merged_to_input(result['merged_file'], backup_old_input=True)
+
+                    if "error" in move_result:
+                        st.error(f"❌ Error al mover archivo: {move_result['error']}")
+                    else:
+                        st.success("✅ Archivo merged movido exitosamente a input!")
+                        st.info(f"📁 Nuevo archivo input: {os.path.basename(move_result['new_input_file'])}")
+                        st.info(f"📊 Registros: {move_result['record_count']}")
+
+                        if move_result['backup_created']:
+                            st.info("💾 Archivos anteriores respaldados en data/input/backup/")
+
+                        # Actualizar el estado para que se refleje en la sidebar
+                        st.rerun()
+
+        with col2:
+            if st.button("🧹 Limpiar Archivos Antiguos", use_container_width=True):
+                with st.spinner("Limpiando archivos antiguos..."):
+                    from post_merge_manager import cleanup_old_files
+
+                    cleanup_result = cleanup_old_files(days_old=30)
+
+                    if "error" in cleanup_result:
+                        st.error(f"❌ Error en limpieza: {cleanup_result['error']}")
+                    else:
+                        if cleanup_result['files_count'] > 0:
+                            st.success(f"🗑️ {cleanup_result['files_count']} archivos antiguos eliminados")
+                        else:
+                            st.info("✨ No hay archivos antiguos para limpiar")
 
 def show_files_page():
     st.markdown('<h1 class="main-header">📁 Gestión de Archivos</h1>', unsafe_allow_html=True)

@@ -63,7 +63,7 @@ class PlacesAPIClient:
             headers = {
                 "Content-Type": "application/json",
                 "X-Goog-Api-Key": self.api_key,
-                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber"
+                "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber,places.businessStatus,places.types,places.location,places.priceLevel,places.rating,places.userRatingCount"
             }
             
             try:
